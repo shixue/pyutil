@@ -40,7 +40,7 @@
         execute()
 
     Example：
-        ret = _db_test_read.fetchone({"table": "che_praise_user", "where": "and id<100", "order": "id desc", "debug": 1})
+        ret = _db_test_read.fetchone({"table": "test_user", "where": "and id<100", "order": "id desc", "debug": 1})
 
 """
 import pymysql
@@ -48,22 +48,23 @@ import pymysql
 #from sshtunnel import SSHTunnelForwarder
 
 class MySQLHelper(object):
+    __instance = None
     __ssh_link = {}
     _sshconf = {}
     __dblink = {}
+    __linkname = None
     __cursor = None
 
-    def __init__(self, dbconf=None):
+    def __init__(self, dbconf={}):
         """dbconfig dict"""
-        if dbconf:
-            self._dbconf = dbconf
-        else:
-            self._dbconf = {}
+        self._dbconf = dbconf
         self._table = self._dbconf.get('table')
-        self.__connection()
+        self.__connection(self)
 
     @classmethod
-    def __connection(self):
+    def __connection(cls, self):
+        if not self._dbconf:
+            self._dbconf = cls._dbconf
         kwargs = self._dbconf
         host = 'host' in kwargs and kwargs['host'] or 'localhost'
         port = 'port' in kwargs and kwargs['port'] or 3306
@@ -71,21 +72,22 @@ class MySQLHelper(object):
         passwd = 'password' in kwargs and kwargs['password'] or ''
         db = 'database' in kwargs and kwargs['database'] or ''
         charset = 'charset' in kwargs and kwargs['charset'] or 'utf8'  # set db charset
-        self.__linkname = 'linkname' in kwargs and kwargs['linkname'] or 'linkname'
+        cls.__linkname = 'linkname' in kwargs and kwargs['linkname'] or 'linkname'
         try:
-            if self._sshconf:
+            if cls._sshconf:
                 """SSH Connection"""
-                _ssh = self._sshconf
-                self.__ssh_link[_ssh['host']] = SSHTunnelForwarder(
+                _ssh = cls._sshconf
+                cls.__ssh_link[_ssh['host']] = SSHTunnelForwarder(
                     ('host' in _ssh and _ssh['host'], 'port' in _ssh and _ssh['port'] or 22),
                     ssh_username=_ssh['user'], ssh_password=_ssh['password'],
                     remote_bind_address=(_ssh['mysqlhost'], 'mysqlport' in _ssh and _ssh['mysqlport'] or port),
                     ssh_pkey='keyname' in _ssh and _ssh['keyname'] or None
                 )
-                self.__ssh_link[_ssh['host']].start()
-                port = self.__ssh_link[_ssh['host']].local_bind_port
-            if not self.__dblink.get(self.__linkname):
-                self.__dblink[self.__linkname] = pymysql.connect(
+                cls.__ssh_link[_ssh['host']].start()
+                port = cls.__ssh_link[_ssh['host']].local_bind_port
+            if not cls.__dblink.get(cls.__linkname):
+                print(cls.__dblink.get(cls.__linkname))
+                cls.__dblink[cls.__linkname] = pymysql.connect(
                     host=host,
                     port=port,
                     user=user,
@@ -93,12 +95,13 @@ class MySQLHelper(object):
                     db=db,
                     charset=charset
                 )
-                self.__cursor = self.__dblink.get(self.__linkname).cursor()
-            if not self.__cursor:
-                self.__cursor = self.__dblink.get(self.__linkname).cursor()
+                cls.__cursor = cls.__dblink.get(cls.__linkname).cursor()
+                print(cls.__dblink.get(cls.__linkname))
+            if not cls.__cursor:
+                cls.__cursor = cls.__dblink.get(cls.__linkname).cursor()
 
         except Exception as ex:
-            self.close()
+            cls.close()
             raise ex
 
     def fetchone(self, param):
@@ -151,6 +154,7 @@ class MySQLHelper(object):
             if param.get('debug'):
                 print("Debug: \n%s\n" % sql)
             return self.execute(sql)
+
         except Exception as ex:
             # log...
             raise ex
@@ -159,6 +163,8 @@ class MySQLHelper(object):
         """sql  string"""
         try:
             ret = self.__cursor.execute(sql, args)
+            if sql.lower().strip().find('insert') == 0:
+                ret = self.__dblink[self.__linkname].insert_id()
             self.__dblink[self.__linkname].commit()
             return ret
         except Exception as ex:
@@ -181,7 +187,7 @@ class MySQLHelper(object):
         if param.get('group'):
             where += ' GROUP BY ' + param.get('group')
         if param.get('order'):
-            where += ' ORDER BY' + param.get('order')
+            where += ' ORDER BY ' + param.get('order')
         if param.get('startIndex'):
             where += ' LIMIT ' + param.get('startIndex') + ',' + param.get('limitNum')
         if not param.get('startIndex') and param.get('limitNum'):
@@ -192,16 +198,25 @@ class MySQLHelper(object):
             print("Debug: \n%s\n"% sql)
         return sql
 
+
+    def getlink(self):
+        return self.__dblink
+
     @classmethod
-    def close(self):
-        if self.__cursor:
-            self.__cursor.close()
-            self.__cursor = None
-        if self.__dblink.get(self.__linkname):
-            self.__dblink[self.__linkname].close()
-            del(self.__dblink[self.__linkname])
-        if self._sshconf and self.__ssh_link.get(self._sshconf.get('host')):
-            self.__ssh_link[self._sshconf['host']].close()
+    def close(cls):
+        if cls.__cursor:
+            cls.__cursor.close()
+            cls.__cursor = None
+        if cls.__dblink.get(cls.__linkname):
+            cls.__dblink[cls.__linkname].close()
+            del cls.__dblink[cls.__linkname]
+        if cls._sshconf and cls.__ssh_link.get(cls._sshconf.get('host')):
+            cls.__ssh_link[cls._sshconf['host']].close()
+
+    def __new__(cls, *args, **kwargs):
+        if not cls.__instance:
+            cls.__instance = object.__new__(cls)
+        return cls.__instance
 
     def __del__(self):
         self.close()
@@ -218,6 +233,6 @@ if __name__ == '__main__':
         }
 
     _db_test_read = DBTest()
-    ret = _db_test_read.fetchone({"table": "che_praise_user", "where": "and id<100", "order": "id desc", "debug": 1})
+    ret = _db_test_read.fetchone({"table": "test_user", "where": "and id<100", "order": "id desc", "debug": 1})
     print(ret)
     del(_db_test_read)
